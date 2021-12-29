@@ -1,0 +1,1 @@
+/usr/bin/c++  -Wall -Os -DNDEBUG  -rdynamic CMakeFiles/kilobot_ALF_dhtf.dir/kilobot_ALF_dhtf.c.o CMakeFiles/kilobot_ALF_dhtf.dir/kilobot_ALF_dhtf_autogen/mocs_compilation.cpp.o  -o kilobot_ALF_dhtf  -L/usr/local/lib/argos3 -Wl,-rpath,/usr/local/lib/argos3 ../../plugins/robots/kilobot/libargos3plugin_simulator_kilolib.a -lrt 

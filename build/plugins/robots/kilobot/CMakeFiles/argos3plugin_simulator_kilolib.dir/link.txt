@@ -1,0 +1,2 @@
+/usr/bin/ar qc libargos3plugin_simulator_kilolib.a  CMakeFiles/argos3plugin_simulator_kilolib.dir/control_interface/kilolib.c.o CMakeFiles/argos3plugin_simulator_kilolib.dir/control_interface/message_crc.c.o CMakeFiles/argos3plugin_simulator_kilolib.dir/argos3plugin_simulator_kilolib_autogen/mocs_compilation.cpp.o
+/usr/bin/ranlib libargos3plugin_simulator_kilolib.a
