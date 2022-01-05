@@ -6,7 +6,10 @@
 
 #define COLLISION_BITS 8
 #define SECTORS_IN_COLLISION 2
-#define ARGOS_SIMULATION
+#define TICKS_TO_SEC 32
+#define NUM_ROBOTS 50
+#define REFRESH_RATE 10
+#define NEIGHBOUR_THRESHOLD 3
 
 typedef enum
 { // Enum for different motion types
@@ -24,43 +27,26 @@ typedef enum
 
 typedef enum
 { // Enum for boolean flags
-  CONSTANT = 0,
+  BROWNIAN = 0,
   PERSISTENT = 1,
-  BROWNIAN = 2,
 } adaptive_walk;
 
 typedef enum
-{ // Enum for the robot states
-  RANDOM_WALKING = 0,
-  WAITING = 1,
-  LEAVING = 2,
-  PARTY = 3,
-} action_t;
+{ // Enum for boolean flags
+  ARK_MSG_TYPE = 0,
+  KILO_MSG_TYPE = 1,
+} msg_type;
 
 typedef enum
-{ // Enum for the robot position wrt to areas
-  OUTSIDE = 0,
-  INSIDE = 1,
-} position_t;
-
-typedef enum
-{ // Enum for the robot position wrt to areas
+{ // store the previous freespace for wall avoidance
   LEFT = 1,
   RIGHT = 2,
 } Free_space;
 
 motion_t current_motion_type = STOP; // Current motion type
 
-action_t current_state = RANDOM_WALKING; // Current state
-
-/* RTID variables */
-bool runtime_identification = false;
-uint32_t backup_kiloticks;
-uint16_t backup_state = RANDOM_WALKING;
-motion_t backup_motion = STOP;
-
 /***********WALK PARAMETERS***********/
-adaptive_walk current_walk = CONSTANT; //start with a meaningless value
+adaptive_walk current_walk = BROWNIAN; // start with a meaningless value
 const float std_motion_steps = 5 * 16; // variance of the gaussian used to compute forward motion
 float levy_exponent = 1.4;             // 2 is brownian like motion (alpha)
 float crw_exponent = 0.9;              // higher more straight (rho)
@@ -72,7 +58,6 @@ uint32_t last_motion_ticks = 0;
 
 /***********WALL AVOIDANCE***********/
 // the kb is "equipped" with a proximity sensor
-
 const uint8_t sector_base = (pow(2, COLLISION_BITS / 2) - 1);
 uint8_t left_side = 0;
 uint8_t right_side = 0;
@@ -81,25 +66,68 @@ Free_space free_space = LEFT;
 bool wall_avoidance_start = false;
 
 /* ---------------------------------------------- */
-//Variables for Smart Arena messages
+// Variables for Smart Arena messages
 int sa_type = 0;
 int sa_payload = 0;
 
-#ifndef ARGOS_SIMULATION
-uint8_t start = 0; // waiting from ARK a start signal to run the experiment 0 : not received, 1 : received, 2 : not need anymore to receive
-#endif
-int location = 0;
-int internal_timeout = 0; //Internal counter for task complention wait
-int turn_timer;           //Avoid the robot to get stuck in Leagving
+/* Message send to the other kilobots */
+message_t messageA;
 
-/* PARAMETER: change this value to determine timeout length */
-const int TIMEOUT_CONST = 10; /*10;*/
-int vIncrement = 0;
-int adaptiveTimeout = 0;
-const uint32_t to_sec = 32;
-uint32_t last_waiting_ticks = 0;
+/* counters for broadcast a message */
+const uint8_t max_broadcast_ticks = 2 * 16; /* n_s*0.5*32 */
+uint32_t last_broadcast_ticks = 0;
 
-uint32_t party_ticks = 0;
+/* Flag for decision to send a word */
+bool sending_msg = false;
+
+/* ---------------------------------------------- */
+/***********EXPERIMENT VARIABLES***********/
+uint32_t census_ticks;
+int neighbor_count = 0;
+int num_robots = NUM_ROBOTS;
+int perceived_neighbors[NUM_ROBOTS];
+int perceived_count = 0;
+
+/*-------------------------------------------------------------------*/
+/* Print Kilobot state                                               */
+/*-------------------------------------------------------------------*/
+void print_state()
+{
+  printf("Current walk: ");
+  switch (current_walk)
+  {
+  case PERSISTENT:
+    printf("PERSISTENT\n");
+    break;
+  case BROWNIAN:
+    printf("BROWNIAN\n");
+    break;
+
+  default:
+    printf("Error, no one of the possible state happens\n");
+    break;
+  }
+}
+
+/*-------------------------------------------------------------------*/
+/* Turn on the right led color                                       */
+/*-------------------------------------------------------------------*/
+void check_state()
+{
+  switch (current_walk)
+  {
+  case BROWNIAN:
+    set_color(RGB(0, 0, 3));
+    break;
+  case PERSISTENT:
+    set_color(RGB(3, 0, 0));
+    break;
+
+  default:
+    set_color(RGB(3, 3, 3));
+    break;
+  }
+}
 
 /*-------------------------------------------------------------------*/
 /* Function for setting the motor speed                              */
@@ -111,35 +139,22 @@ void set_motion(motion_t new_motion_type)
     switch (new_motion_type)
     {
     case FORWARD:
-      if (!runtime_identification)
-      {
-        spinup_motors();
-        set_motors(kilo_straight_left, kilo_straight_right);
-      }
+      spinup_motors();
+      set_motors(kilo_straight_left, kilo_straight_right);
       break;
     case TURN_LEFT:
-      if (!runtime_identification)
-      {
-        spinup_motors();
-        set_motors(kilo_turn_left, 0);
-      }
+      spinup_motors();
+      set_motors(kilo_turn_left, 0);
       break;
     case TURN_RIGHT:
-      if (!runtime_identification)
-      {
-        spinup_motors();
-        set_motors(0, kilo_turn_right);
-      }
+      spinup_motors();
+      set_motors(0, kilo_turn_right);
       break;
     case STOP:
     default:
       set_motors(0, 0);
     }
     current_motion_type = new_motion_type;
-    if (current_motion_type != STOP)
-    {
-      backup_motion = current_motion_type;
-    }
   }
 }
 
@@ -157,7 +172,6 @@ void parse_smart_arena_message(uint8_t data[9], uint8_t kb_index)
   switch (sa_type)
   {
   case 0:
-    location = sa_type;
     if (sa_payload != 0)
     {
       // get rotation toward the center (if far from center)
@@ -166,48 +180,50 @@ void parse_smart_arena_message(uint8_t data[9], uint8_t kb_index)
       wall_avoidance_start = true;
     }
     break;
+  }
+}
 
-  case 1:
-    location = sa_type;
-    if (internal_timeout == 0)
-    {
-      current_walk = (sa_payload >> 8) & 0x03;
-      adaptiveTimeout = (sa_payload >> 7) & 0x01;
-      internal_timeout = ((sa_payload & 0X7F) * TIMEOUT_CONST);
-      if (adaptiveTimeout == 1)
-      {
-        internal_timeout += vIncrement;
-      }
-      // printf("kID=%d, Internal timeout=%d\t adaptiveTimeout=%d\t increment=%d\n", kilo_uid, internal_timeout, adaptiveTimeout, vIncrement);
-      // printf("kID=%d, adaptive walk=%d\n", kilo_uid, (int)current_walk);
-    }
-    break;
+/*-------------------------------------------------------------------*/
+/* Send current kb status to the swarm                               */
+/*-------------------------------------------------------------------*/
+message_t *message_tx()
+{
+  if (sending_msg)
+  {
+    /* this one is filled in the loop */
+    return &messageA;
+  }
+  return 0;
+}
 
-  case 2:
-    if (sa_payload != 0)
-    {
-      // get rotation toward the center (if far from center)
-      // avoid colliding with the wall
-      proximity_sensor = sa_payload;
-      wall_avoidance_start = true;
-    }
-    break;
+/*-------------------------------------------------------------------*/
+/* Callback function for successful transmission                     */
+/*-------------------------------------------------------------------*/
+void message_tx_success()
+{
+  sending_msg = false;
+}
 
-  case 3:
-    current_state = PARTY;
-    party_ticks = kilo_ticks;
-    break;
+/*-------------------------------------------------------------------*/
+/* Function to broadcast a message                                        */
+/*-------------------------------------------------------------------*/
+void broadcast()
+{
+  if (sending_msg == false && (kilo_ticks > last_broadcast_ticks + max_broadcast_ticks || kilo_ticks < max_broadcast_ticks))
+  {
+    last_broadcast_ticks = kilo_ticks;
+    sending_msg = true;
   }
 }
 
 /*-------------------------------------------------------------------*/
 /* Callback function for message reception                           */
 /*-------------------------------------------------------------------*/
-void rx_message(message_t *msg, distance_measurement_t *d)
+void message_rx(message_t *msg, distance_measurement_t *d)
 {
 
   /* Unpack the message - extract ID, type and payload */
-  if (msg->type == 0)
+  if (msg->type == ARK_MSG_TYPE)
   {
     int id1 = msg->data[0] << 2 | (msg->data[1] >> 6);
     int id2 = msg->data[3] << 2 | (msg->data[4] >> 6);
@@ -227,73 +243,35 @@ void rx_message(message_t *msg, distance_measurement_t *d)
     }
   }
 
-#ifndef ARGOS_SIMULATION
-  /* start signal!*/
-  else if (msg->type == 1 && start != 2)
+  else if (msg->type == KILO_MSG_TYPE)
   {
-    start = 1;
+    // set_color(RGB(0, 3, 0));
+
+    // If distance is too much, the message will be discarded
+    uint8_t cur_distance = estimate_distance(d);
+
+    /* ----------------------------------*/
+    /* KB interactive message            */
+    /* ----------------------------------*/
+    // if new_information == true means that the kb has yet the info about the target, so the following msg not needed
+    if (cur_distance < 100 && msg->data[0] != kilo_uid && msg->crc == message_crc(msg))
+    {
+      if (perceived_neighbors[msg->data[0]] != 1)
+      {
+        if (kilo_uid == 0)
+        {
+          printf("Percived kilobot %d\n", msg->data[0]);
+        }
+        perceived_count += 1;
+        perceived_neighbors[msg->data[0]] = 1;
+      }
+    }
   }
 
-  /* ARK ID identification */
-  else if (msg->type == 120)
+  else
   {
-    int id = (msg->data[0] << 8) | msg->data[1];
-    if (id == kilo_uid)
-    {
-      set_color(RGB(0, 0, 3));
-    }
-    else
-    {
-      set_color(RGB(3, 0, 0));
-    }
+    printf("Received msg with msd type: %d\n", msg->type);
   }
-
-  /** ARK Runtime identification **/
-  else if (msg->type == 119)
-  {
-    // runtime identification
-    int id = (msg->data[0] << 8) | msg->data[1];
-    if (id >= 0)
-    { // runtime identification ongoing
-      set_motion(STOP);
-      runtime_identification = true;
-      if (id == kilo_uid)
-      {
-        set_color(RGB(0, 0, 3));
-      }
-      else
-      {
-        set_color(RGB(3, 0, 0));
-      }
-    }
-    else
-    { // runtime identification ended
-      kilo_ticks = backup_kiloticks;
-      //set_color(current_LED_color);
-      runtime_identification = false;
-      set_motion(backup_motion);
-      current_state = backup_state;
-      switch (current_state)
-      {
-      case RANDOM_WALKING:
-        set_color(RGB(0, 3, 0));
-        break;
-      case WAITING:
-        set_color(RGB(0, 0, 3));
-        break;
-      case LEAVING:
-        set_color(RGB(3, 0, 0));
-        break;
-      case PARTY:
-        set_color(RGB(3, 0, 3));
-        break;
-      default:
-        set_color(RGB(0, 3, 0));
-        break;
-      }
-    }
-  }
-#endif
 }
 
 /*-------------------------------------------------------------------*/
@@ -306,7 +284,7 @@ void random_walk()
   {
   case PERSISTENT:
     crw_exponent = 0.9;
-    levy_exponent = 1.4;
+    levy_exponent = 2.0;
     // printf("kID=%d, PERSISTENT\n", kilo_uid);
     break;
   case BROWNIAN:
@@ -371,11 +349,9 @@ void random_walk()
 void setup()
 {
   /* Initialise LED and motors */
-#ifdef ARGOS_SIMULATION
   set_color(RGB(0, 0, 0));
-#else
-  set_color(RGB(0, 3, 0));
-#endif
+  if (kilo_uid == 0)
+    set_color(RGB(0, 0, 3));
   set_motors(0, 0);
 
   /* Initialise random seed */
@@ -384,11 +360,23 @@ void setup()
   seed = rand_hard();
   srand(seed);
 
-#ifdef ARGOS_SIMULATION
   set_motion(FORWARD);
-#else
-  set_motion(STOP);
-#endif
+
+  /* Initialise KBots message */
+  messageA.type = KILO_MSG_TYPE; // 0 for ARK, 1 for KBots
+  messageA.data[0] = kilo_uid;
+  messageA.crc = message_crc(&messageA);
+
+  /* Initialise counter to update kilobot neighbours count */
+  census_ticks = kilo_ticks;
+
+  /* initialize elements of array perceived_neighbors to 0 */
+  for (int i = 0; i < num_robots; i++)
+  {
+    perceived_neighbors[i] = 0;
+    if (i == kilo_uid)
+      perceived_neighbors[i] = 1;
+  }
 }
 
 /*-------------------------------------------------------------------*/
@@ -442,17 +430,7 @@ void wall_avoidance_procedure(uint8_t sensor_readings)
 
     else
     {
-      // set_color(RGB(0,3,0));
-      // random rotation strategy
-      // if (rand_soft() % 2)
-      // {
-      //   set_motion(TURN_LEFT);
-      // }
-      // else
-      // {
-      //   set_motion(TURN_RIGHT);
-      // }
-      //rotate towards the last free space kept in memory
+      // rotate towards the last free space kept in memory
       set_motion(free_space);
     }
     if (kilo_ticks > last_motion_ticks + turning_ticks)
@@ -468,84 +446,32 @@ void wall_avoidance_procedure(uint8_t sensor_readings)
 }
 
 /*-------------------------------------------------------------------*/
-/* Function implementing kilobot FSM and state transitions           */
+/* Reset variables each refresh_rate seconds                         */
 /*-------------------------------------------------------------------*/
-void finite_state_machine()
+void update_variables()
 {
-  /* State transition */
-  switch (current_state)
+  if (kilo_uid == 0)
   {
-  case RANDOM_WALKING:
-  {
-    if (location == INSIDE)
-    {
-      set_motion(STOP);
-
-      last_waiting_ticks = kilo_ticks;
-
-      set_color(RGB(0, 0, 3));
-      current_state = WAITING;
-    }
-    break;
+    // /* output each array element's value */
+    // for (int j = 0; j < num_robots; j++)
+    // {
+    //   printf("Element[%d] = %d\n", j, perceived_neighbors[j]);
+    // }
+    printf("\n\n");
   }
-  case WAITING:
-  {
-    /* Completion condition */
-    if (location == OUTSIDE)
-    {
-      current_state = RANDOM_WALKING;
-      set_motion(FORWARD);
 
-      if (internal_timeout + vIncrement > 10)
-      {
-        vIncrement -= 10;
-      }
-      internal_timeout = 0;
-      // printf("kID=%d, area completed, increment=%d\n\n", kilo_uid, vIncrement);
-      set_color(RGB(0, 0, 0));
-    }
+  if (perceived_count >= NEIGHBOUR_THRESHOLD)
+    current_walk = BROWNIAN;
+  else
+    current_walk = PERSISTENT;
 
-    /* Timeout condition */
-    else if (kilo_ticks > last_waiting_ticks + internal_timeout * to_sec)
-    {
-      current_state = LEAVING;
-      set_motion(FORWARD);
+  perceived_count = 0;
 
-      internal_timeout = 0;
-      vIncrement += 10;
-      // printf("kID=%d, elapsed timeout, increment=%d\n\n", kilo_uid, vIncrement);
-      set_color(RGB(3, 0, 0));
-    }
-    break;
-  }
-  case LEAVING:
+  for (int i = 0; i < num_robots; i++)
   {
-    if (location == OUTSIDE)
-    {
-      current_state = RANDOM_WALKING;
-      set_color(RGB(0, 0, 0));
-    }
-    break;
-  }
-  case PARTY:
-  {
-    set_motion(STOP);
-    set_color(RGB(0, 3, 0));
-    delay(500);
-    set_color(RGB(3, 0, 3));
-    delay(500);
-    if (kilo_ticks > party_ticks + 10 * to_sec)
-    {
-      set_motion(FORWARD);
-      current_state = RANDOM_WALKING;
-      set_color(RGB(0, 0, 0));
-    }
-    break;
-  }
-  }
-  if (!runtime_identification)
-  {
-    backup_state = current_state;
+    perceived_neighbors[i] = 0;
+    if (i == kilo_uid)
+      perceived_neighbors[i] = 1;
   }
 }
 
@@ -554,47 +480,44 @@ void finite_state_machine()
 /*-------------------------------------------------------------------*/
 void loop()
 {
-#ifndef ARGOS_SIMULATION
-  if (start == 1)
+  // turn on the right led color
+  check_state();
+  // if (kilo_uid == 0)
+  //   print_state();
+
+  if (wall_avoidance_start)
   {
-    /* Initialise motion variables */
-    last_motion_ticks = rand() % max_straight_ticks;
-    set_motion(FORWARD);
-    start = 2;
+    wall_avoidance_procedure(proximity_sensor);
+    proximity_sensor = 0;
+    wall_avoidance_start = false;
   }
-
-  if (!runtime_identification)
+  else
   {
-    backup_kiloticks = kilo_ticks; // which we restore in after runtime_identification
-#endif
-    if (wall_avoidance_start)
+    random_walk();
+    broadcast();
+    if (kilo_ticks > (census_ticks + REFRESH_RATE * TICKS_TO_SEC)) // raise timer each 10 seconds
     {
-      wall_avoidance_procedure(proximity_sensor);
-      proximity_sensor = 0;
-      wall_avoidance_start = false;
-    }
-    else
-    {
-      random_walk();
-      finite_state_machine();
-      // printf("kID=%d, crw=%f\tlevy=%f\n", kilo_uid, crw_exponent, levy_exponent);
-    }
+      census_ticks = kilo_ticks;
 
-#ifndef ARGOS_SIMULATION
+      update_variables();
+      /***
+       * DO SOMETHING
+       * ***/
+    }
+    // printf("kID=%d, crw=%f\tlevy=%f\n", kilo_uid, crw_exponent, levy_exponent);
   }
-#endif
-
-  // if( collision_avoidance_test == true && kilo_ticks > last_motion_ticks + turning_ticks )
-  // {
-  //   collision_avoidance_test = false;
-  //   set_color(RGB(0,3,0));
-  // }
 }
 
 int main()
 {
   kilo_init();
-  kilo_message_rx = rx_message;
+  // register message reception callback
+  kilo_message_rx = message_rx;
+  // register message transmission callback
+  kilo_message_tx = message_tx;
+  // register tranmsission success callback
+  kilo_message_tx_success = message_tx_success;
+
   kilo_start(setup, loop);
   return 0;
 }

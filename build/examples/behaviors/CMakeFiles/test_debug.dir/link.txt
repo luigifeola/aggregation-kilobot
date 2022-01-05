@@ -1,1 +1,0 @@
-/usr/bin/c++  -Wall -Os -DNDEBUG  -rdynamic CMakeFiles/test_debug.dir/test_debug.c.o CMakeFiles/test_debug.dir/test_debug_autogen/mocs_compilation.cpp.o  -o test_debug  -L/usr/local/lib/argos3 -Wl,-rpath,/usr/local/lib/argos3 ../../plugins/robots/kilobot/libargos3plugin_simulator_kilolib.a -lrt 

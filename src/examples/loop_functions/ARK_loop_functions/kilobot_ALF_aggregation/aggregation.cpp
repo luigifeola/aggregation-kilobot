@@ -45,7 +45,7 @@ void aggregationCALF::Init(TConfigurationNode &t_node)
 
     /** 
      * 
-     * WARNING:  set and read the right parameters from .argos 
+     * WARNING:  set and read the right parameters you need from .argos 
      * 
      * */
 
@@ -55,20 +55,19 @@ void aggregationCALF::Init(TConfigurationNode &t_node)
     // GetNodeAttributeOrDefault(tModeNode, "adaptive_timeut", adaptive_timeout, false);
 
     random_seed = GetSimulator().GetRandomSeed();
-    //GetNodeAttribute(tModeNode, "random_seed", random_seed);
 }
 
 void aggregationCALF::SetupInitialKilobotStates()
 {
-    m_vecKilobotStates_ALF.resize(m_tKilobotEntities.size());
     m_vecKilobotsPositions.resize(m_tKilobotEntities.size());
     m_vecKilobotsColours.resize(m_tKilobotEntities.size());
     m_vecKilobotsOrientations.resize(m_tKilobotEntities.size());
+
+    m_vecKilobotWalks_ALF.resize(m_tKilobotEntities.size());
+
     m_vecLastTimeMessaged.resize(m_tKilobotEntities.size());
     m_fMinTimeBetweenTwoMsg = Max<Real>(1.0, m_tKilobotEntities.size() * m_fTimeForAMessage / 3.0);
 
-    /** WARNING: CHECK!!*/
-    // m_vecKilobotWalks_ALF.resize(m_tKilobotEntities.size());
 
     /* Compute the number of kilobots on the field*/
     for (UInt16 it = 0; it < m_tKilobotEntities.size(); it++)
@@ -81,14 +80,11 @@ void aggregationCALF::SetupInitialKilobotStates()
 void aggregationCALF::SetupInitialKilobotState(CKilobotEntity &c_kilobot_entity)
 {
     UInt16 unKilobotID = GetKilobotId(c_kilobot_entity);
-    /** WARNING: CHECK!!*/
-    // m_vecKilobotStates_ALF[unKilobotID] = OUTSIDE_AREAS;
-    // m_vecKilobotWalks_ALF[unKilobotID] = CONSTANT;
+    m_vecKilobotWalks_ALF[unKilobotID] = PERSISTENT;
     m_vecLastTimeMessaged[unKilobotID] = -1000;
 
     /* Get a non-colliding random position within the circular arena */
     bool distant_enough = false;
-    Real rand_angle;
     Real rand_x, rand_y;
 
     UInt16 maxTries = 999;
@@ -136,13 +132,7 @@ void aggregationCALF::SetupVirtualEnvironments(TConfigurationNode &t_tree)
     GetNodeAttribute(t_VirtualWallsNode, "height", m_ArenaStructure.Wall_height);
     GetNodeAttribute(t_VirtualWallsNode, "walls", m_ArenaStructure.Wall_numbers);
 
-    /** 
-     * 
-     * WARNING:  CHECK loaded parameters
-     * 
-     * */
-    /* Get the node defining the task parameters*/
-    // TConfigurationNode &t_VirtualTaskNode = GetNode(tVirtualEnvironmentsNode, "VirtualTask");
+    m_ArenaStructure.Radius = vArena_size / 2.0;
 
     std::ostringstream entity_id;
     CRadians wall_angle = CRadians::TWO_PI / m_ArenaStructure.Wall_numbers;
@@ -213,13 +203,14 @@ void aggregationCALF::UpdateKilobotState(CKilobotEntity &c_kilobot_entity)
     m_vecKilobotsOrientations[unKilobotID] = GetKilobotOrientation(c_kilobot_entity);
     m_vecKilobotsColours[unKilobotID] = GetKilobotLedColor(c_kilobot_entity);
 
+    /** WARNING: here you could update walk state based on LED kilo colour */
     /** Print kilo state*/
-    // for (int kID; kID < m_vecKilobotStates_ALF.size(); kID++)
+    // for (int kID; kID < m_vecKilobotWalks_ALF.size(); kID++)
     // {
     //     std::cout << "kID:" << kID << " state: ";
-    //     switch (m_vecKilobotStates_ALF[kID])
+    //     switch (m_vecKilobotWalks_ALF[kID])
     //     {
-    //     
+    //
     //     default:
     //         std::cout << "Error no state";
     //         break;
@@ -268,6 +259,9 @@ void aggregationCALF::UpdateVirtualSensor(CKilobotEntity &c_kilobot_entity)
 
         // std::cout<<"******Prox dec: "<<proximity_sensor_dec<<std::endl;
     }
+    else{
+        proximity_sensor_dec = 0;
+    }
 
     // /********************************************/
     // /********* SENDING MESSAGE ******************/
@@ -280,19 +274,10 @@ void aggregationCALF::UpdateVirtualSensor(CKilobotEntity &c_kilobot_entity)
     {
         /* Compose the message for a kilobot */
         tKilobotMessage.m_sID = unKilobotID;                                //ID of the receiver
-        tKilobotMessage.m_sType = (int)m_vecKilobotStates_ALF[unKilobotID]; //state
-        tKilobotMessage.m_sData = 0;
+        tKilobotMessage.m_sType = 0;                                        // ARK does not need to send anything
+        tKilobotMessage.m_sData = proximity_sensor_dec;
 
-        
-
-        Real fDistance = Distance(m_vecKilobotsPositions[unKilobotID], m_ArenaStructure.Center);
-        if (fDistance > vDistance_threshold)
-        {
-            tKilobotMessage.m_sData = proximity_sensor_dec;
-            bMessageToSend = true;
-            // std::cerr<<"sending COLLIDING\n";
-        }
-        // bMessageToSend=true;      //use this line to send msgs always
+        bMessageToSend = (proximity_sensor_dec == 0) ? false : true;
     }
 
     if (bMessageToSend)
@@ -341,10 +326,16 @@ void aggregationCALF::PostStep()
 {
     // std::cout << "Time: " << m_fTimeInSeconds << std::endl;
     internal_counter += 1;
-    if (internal_counter % m_unDataAcquisitionFrequency == 0 || internal_counter <= 1)
-    {
-        KiloLOG();
-    }
+
+    /**
+     *
+     * WARNING:  decomment to LOG kiloState
+     *
+     * */
+    // if (internal_counter % m_unDataAcquisitionFrequency == 0 || internal_counter <= 1)
+    // {
+    //     KiloLOG();
+    // }
 }
 
 
@@ -358,14 +349,6 @@ void aggregationCALF::KiloLOG()
     for (size_t kID = 0; kID < m_vecKilobotsPositions.size(); kID++)
     {
         m_kiloOutput
-            // << kID << '\t'
-            // << m_vecKilobotStates_ALF[kID] << '\t' //TODO: this should be the colour, but for now is the state
-            // << m_vecKilobotsPositions[kID].GetX() << '\t'
-            // << m_vecKilobotsPositions[kID].GetY() << '\t'
-            // << m_vecKilobotsOrientations[kID] << '\t'
-            // << m_vecKilobotStates_ALF[kID];
-
-            // << std::noshowpos
             << '\t'
             << std::noshowpos << std::setw(2) << std::setprecision(0) << std::setfill('0')
             << kID << '\t'
@@ -376,7 +359,7 @@ void aggregationCALF::KiloLOG()
             << std::internal << std::showpos << std::setw(6) << std::setprecision(4) << std::setfill('0') << std::fixed
             << m_vecKilobotsOrientations[kID].GetValue() << '\t'
             << std::noshowpos << std::setw(1) << std::setprecision(0)
-            << m_vecKilobotStates_ALF[kID];
+            << m_vecKilobotWalks_ALF[kID];
     }
     m_kiloOutput << std::endl;
 }
@@ -386,11 +369,17 @@ CColor aggregationCALF::GetFloorColor(const CVector2 &vec_position_on_plane)
     CColor cColor = CColor::WHITE;
 
     /** Draw the threshold for wall avoidance */
-    // if (SquareDistance(vec_position_on_plane, CVector2(0.0, 0.0)) < pow(vDistance_threshold + 0.005, 2) &&
-    //     SquareDistance(vec_position_on_plane, CVector2(0.0, 0.0)) > pow(vDistance_threshold - 0.005, 2))
-    // {
-    //     cColor = CColor::ORANGE;
-    // }
+    if (SquareDistance(vec_position_on_plane, CVector2(0.0, 0.0)) < pow(vDistance_threshold + 0.005, 2) &&
+        SquareDistance(vec_position_on_plane, CVector2(0.0, 0.0)) > pow(vDistance_threshold - 0.005, 2))
+    {
+        cColor = CColor::ORANGE;
+    }
+
+    Real fKiloVision = Distance(vec_position_on_plane, m_vecKilobotsPositions[0]);
+    if (fKiloVision < 0.03 /*&& fKiloVision > 0.03 - 0.02*/)
+    {
+        cColor = CColor(0, 0, 125, 0);
+    }
 
     return cColor;
 }

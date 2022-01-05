@@ -131,18 +131,11 @@ private:
 
     SVirtualWalls m_ArenaStructure;
 
-    typedef enum //kilobot state
-    {
-        // OUTSIDE_AREAS = 0, 
-        // INSIDE_AREA = 1,   
-        // LEAVING = 2,       
-    } SRobotState;
 
     typedef enum //kilobot walk
     {
-        // CONSTANT = 0,
-        // PERSISTENT = 1,
-        // BROWNIAN = 2,
+        BROWNIAN = 0,
+        PERSISTENT = 1,
     } SRobotWalk;
 
     struct FloorColorData //contains components of area color
@@ -153,7 +146,6 @@ private:
     };
 
     UInt32 random_seed;
-    bool adaptive_walk;              //if true, RW motion switches among different config (brownian and/or persistent)
     
     /************************************/
     /*       Experiment variables       */
@@ -169,7 +161,6 @@ private:
     std::vector<CVector2> m_vecKilobotsPositions;
     std::vector<argos::CColor> m_vecKilobotsColours;
     std::vector<CRadians> m_vecKilobotsOrientations;
-    std::vector<SRobotState> m_vecKilobotStates_ALF;
     std::vector<SRobotWalk> m_vecKilobotWalks_ALF; //when adaptive, switch among persistent and brownian walk
 
     /* output LOG files */
