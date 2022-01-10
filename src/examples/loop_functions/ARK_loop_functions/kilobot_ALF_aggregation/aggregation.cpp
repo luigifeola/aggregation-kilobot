@@ -203,18 +203,12 @@ void aggregationCALF::UpdateKilobotState(CKilobotEntity &c_kilobot_entity)
     m_vecKilobotsOrientations[unKilobotID] = GetKilobotOrientation(c_kilobot_entity);
     m_vecKilobotsColours[unKilobotID] = GetKilobotLedColor(c_kilobot_entity);
 
-    /** WARNING: here you could update walk state based on LED kilo colour */
-    /** Print kilo state*/
-    // for (int kID; kID < m_vecKilobotWalks_ALF.size(); kID++)
+    m_vecKilobotWalks_ALF[unKilobotID] = (m_vecKilobotsColours[unKilobotID] == CColor::BLUE) ? BROWNIAN : PERSISTENT;
+
+    // // just for debug
+    // if (unKilobotID == 0)
     // {
-    //     std::cout << "kID:" << kID << " state: ";
-    //     switch (m_vecKilobotWalks_ALF[kID])
-    //     {
-    //
-    //     default:
-    //         std::cout << "Error no state";
-    //         break;
-    //     }
+    //     std::cout << "kID 0 walk: " << ((m_vecKilobotWalks_ALF[unKilobotID] == BROWNIAN) ? "Brownian" : "Persistent") << std::endl;
     // }
 }
 
@@ -224,11 +218,6 @@ void aggregationCALF::UpdateVirtualSensor(CKilobotEntity &c_kilobot_entity)
     m_tALFKilobotMessage tKilobotMessage, tEmptyMessage, tMessage;
     bool bMessageToSend = false;
 
-    /** 
-     * 
-     * WARNING:  2 times the same if —> try to merge
-     * 
-     * */
     /********************************************/
     /********* WALL AVOIDANCE STUFF *************/
     /********************************************/
@@ -327,15 +316,10 @@ void aggregationCALF::PostStep()
     // std::cout << "Time: " << m_fTimeInSeconds << std::endl;
     internal_counter += 1;
 
-    /**
-     *
-     * WARNING:  decomment to LOG kiloState
-     *
-     * */
-    // if (internal_counter % m_unDataAcquisitionFrequency == 0 || internal_counter <= 1)
-    // {
-    //     KiloLOG();
-    // }
+    if (internal_counter % m_unDataAcquisitionFrequency == 0 || internal_counter <= 1)
+    {
+        KiloLOG();
+    }
 }
 
 
