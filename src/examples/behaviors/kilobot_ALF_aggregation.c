@@ -4,12 +4,20 @@
 #include <math.h>
 #include "distribution_functions.c"
 
+// Constants
 #define COLLISION_BITS 8
 #define SECTORS_IN_COLLISION 2
 #define TICKS_TO_SEC 32
+
+// Parameters of the experiment
 #define NUM_ROBOTS 20
 #define REFRESH_RATE 10
-#define NEIGHBOUR_THRESHOLD 3
+#define INSIDE_CLUSTER_THRESHOLD 3
+#define OUTSIDE_CLUSTER_THRESHOLD 1
+#define COMMUNICATION_THRESHOLD 100 // defined in millimiters
+
+// Parameters of the Random Walk
+#define STD_MOTION_STEPS 5 * 16 // variance of the gaussian used to compute forward motion
 
 typedef enum
 { // Enum for different motion types
@@ -46,13 +54,13 @@ typedef enum
 motion_t current_motion_type = STOP; // Current motion type
 
 /***********WALK PARAMETERS***********/
-adaptive_walk current_walk = BROWNIAN; // start with a meaningless value
-const float std_motion_steps = 5 * 16; // variance of the gaussian used to compute forward motion
-float levy_exponent = 1.4;             // 2 is brownian like motion (alpha)
-float crw_exponent = 0.9;              // higher more straight (rho)
-uint32_t turning_ticks = 0;            // keep count of ticks of turning
-const uint8_t max_turning_ticks = 120; /* constant to allow a maximum rotation of 180 degrees with \omega=\pi/5 */
-unsigned int straight_ticks = 0;       // keep count of ticks of going straight
+adaptive_walk current_walk = BROWNIAN;           // start with a meaningless value
+const float std_motion_steps = STD_MOTION_STEPS; // variance of the gaussian used to compute forward motion
+float levy_exponent = 1.4;                       // 2 is brownian like motion (alpha)
+float crw_exponent = 0.9;                        // higher more straight (rho)
+uint32_t turning_ticks = 0;                      // keep count of ticks of turning
+const uint8_t max_turning_ticks = 120;           /* constant to allow a maximum rotation of 180 degrees with \omega=\pi/5 */
+unsigned int straight_ticks = 0;                 // keep count of ticks of going straight
 const uint16_t max_straight_ticks = 320;
 uint32_t last_motion_ticks = 0;
 
@@ -209,7 +217,7 @@ void message_tx_success()
 /*-------------------------------------------------------------------*/
 void broadcast()
 {
-  if (sending_msg == false && (kilo_ticks > last_broadcast_ticks + max_broadcast_ticks || kilo_ticks < max_broadcast_ticks))
+  if (sending_msg == false /*&& (kilo_ticks > last_broadcast_ticks + max_broadcast_ticks || kilo_ticks < max_broadcast_ticks)*/) // uncomment on if communication frequency is supposed to be limited
   {
     last_broadcast_ticks = kilo_ticks;
     sending_msg = true;
@@ -254,7 +262,8 @@ void message_rx(message_t *msg, distance_measurement_t *d)
     /* KB interactive message            */
     /* ----------------------------------*/
     // if new_information == true means that the kb has yet the info about the target, so the following msg not needed
-    if (cur_distance < 100 && msg->data[0] != kilo_uid && msg->crc == message_crc(msg))
+    // printf("Estimated distance: %d \n", cur_distance);
+    if (cur_distance < COMMUNICATION_THRESHOLD && msg->data[0] != kilo_uid && msg->crc == message_crc(msg))
     {
       if (perceived_neighbors[msg->data[0]] != 1)
       {
@@ -460,9 +469,10 @@ void update_variables()
     printf("\n\n");
   }
 
-  if (perceived_count >= NEIGHBOUR_THRESHOLD)
+  if (perceived_count >= INSIDE_CLUSTER_THRESHOLD)
     current_walk = BROWNIAN;
-  else
+
+  else if (perceived_count <= OUTSIDE_CLUSTER_THRESHOLD)
     current_walk = PERSISTENT;
 
   perceived_count = 0;
